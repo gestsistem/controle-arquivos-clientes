@@ -73,7 +73,7 @@ Sistema completo de gestão de clientes e backups conectado ao Supabase, com:
 4. Clique em **"Commit changes"**
 
 **Opção B: Via Git (Se você tem Git instalado)**
-
+pro
 ```bash
 git init
 git add .

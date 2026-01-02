@@ -13,15 +13,21 @@ interface Cliente {
   id: string
   nome: string
   sistema: string
-  email: string
+  emails: string[] // Múltiplos emails
+  emailPrimario: string
   telefone: string
-  statusEnvio: 'Enviado' | 'Pendente'
+  statusEnvio: 'Enviado' | 'Pendente' | 'Recém Implantado' | 'Gerencial' | 'Inativo' | 'Não Teve Vendas' | 'Bloqueio SEFAZ' | 'Bloqueio Financeiro'
   statusBackup: 'Feito' | 'Pendente'
   analista: string
   dataAtualizacao: string
+  dataConclusaoEnvio?: string // Data quando status envio foi marcado como "Enviado"
+  dataConclusaoBackup?: string // Data quando backup foi marcado como "Feito"
   concluido: boolean
   prioritario: boolean
   ativo: boolean
+  atencao: boolean // Necessita de atenção
+  atrasado: boolean // Atraso de envio
+  motivoSemBackup?: string // Motivo quando envio concluído sem backup
 }
 
 interface Analista {
@@ -30,16 +36,31 @@ interface Analista {
   dataCriacao: string
 }
 
+interface Sistema {
+  id: string
+  nome: string
+  dataCriacao: string
+}
+
+interface MotivoBackup {
+  id: string
+  clienteId: string
+  clienteNome: string
+  analista: string
+  motivo: string
+  data: string
+}
+
 interface HistoricoReset {
   id: string
-  mesAno: string // YYYY-MM
+  mesAno: string
   dataReset: string
   totalClientes: number
   clientesSnapshot: Cliente[]
 }
 
 interface ResetInfo {
-  ultimoReset: string // YYYY-MM formato
+  ultimoReset: string
 }
 
 // Obter todos os analistas
@@ -120,7 +141,8 @@ app.post('/make-server-c70d4af9/clientes', async (c) => {
       id,
       nome,
       sistema,
-      email,
+      emails: [email],
+      emailPrimario: email,
       telefone,
       statusEnvio: 'Pendente',
       statusBackup: 'Pendente',
@@ -128,7 +150,9 @@ app.post('/make-server-c70d4af9/clientes', async (c) => {
       dataAtualizacao: new Date().toISOString(),
       concluido: false,
       prioritario: false,
-      ativo: true
+      ativo: true,
+      atencao: false,
+      atrasado: false
     }
 
     await kv.set(id, novoCliente)
@@ -145,27 +169,41 @@ app.put('/make-server-c70d4af9/clientes/:id', async (c) => {
   try {
     const id = c.req.param('id')
     const body = await c.req.json()
-    const { statusEnvio, statusBackup, analista, prioritario, ativo } = body
 
     const clienteExistente = await kv.get(id) as Cliente
     if (!clienteExistente) {
       return c.json({ error: 'Cliente não encontrado' }, 404)
     }
 
+    const dataAtual = new Date().toISOString()
+
+    // Atualizar TODOS os campos que vierem no body
     const clienteAtualizado: Cliente = {
       ...clienteExistente,
-      ...(statusEnvio && { statusEnvio }),
-      ...(statusBackup && { statusBackup }),
-      ...(analista !== undefined && { analista }),
-      ...(prioritario !== undefined && { prioritario }),
-      ...(ativo !== undefined && { ativo }),
-      dataAtualizacao: new Date().toISOString()
+      ...body,
+      id: clienteExistente.id, // Preservar ID
+      dataAtualizacao: dataAtual
+    }
+
+    // Registrar data de conclusão do envio
+    if (body.statusEnvio === 'Enviado' && clienteExistente.statusEnvio !== 'Enviado') {
+      clienteAtualizado.dataConclusaoEnvio = dataAtual
+    }
+
+    // Registrar data de conclusão do backup
+    if (body.statusBackup === 'Feito' && clienteExistente.statusBackup !== 'Feito') {
+      clienteAtualizado.dataConclusaoBackup = dataAtual
     }
 
     // Verificar se está concluído (ambos os status completos)
     clienteAtualizado.concluido = 
       clienteAtualizado.statusEnvio === 'Enviado' && 
       clienteAtualizado.statusBackup === 'Feito'
+
+    // Verificar se necessita atenção (envio concluído mas backup pendente)
+    clienteAtualizado.atencao = 
+      clienteAtualizado.statusEnvio === 'Enviado' && 
+      clienteAtualizado.statusBackup === 'Pendente'
 
     await kv.set(id, clienteAtualizado)
     console.log('Cliente atualizado:', clienteAtualizado)
@@ -209,13 +247,21 @@ app.post('/make-server-c70d4af9/reset-mensal', async (c) => {
 
     // Atualizar todos os clientes
     const updates = clientes.map(cliente => {
+      // Marcar como atrasado se estiver ativo e com envio pendente
+      const atrasado = cliente.ativo && cliente.statusEnvio === 'Pendente'
+      
       const clienteAtualizado: Cliente = {
         ...cliente,
         statusEnvio: 'Pendente',
         statusBackup: 'Pendente',
         analista: '',
         concluido: false,
-        dataAtualizacao: dataAtual
+        atencao: false,
+        atrasado: atrasado, // Marca como atrasado se estava pendente
+        dataAtualizacao: dataAtual,
+        // PRESERVA as datas de conclusão para relatórios
+        dataConclusaoEnvio: cliente.dataConclusaoEnvio,
+        dataConclusaoBackup: cliente.dataConclusaoBackup
       }
       return kv.set(cliente.id, clienteAtualizado)
     })
@@ -255,6 +301,102 @@ app.get('/make-server-c70d4af9/historico-resets', async (c) => {
   } catch (error) {
     console.error('Erro ao buscar histórico:', error)
     return c.json({ error: 'Erro ao buscar histórico', details: String(error) }, 500)
+  }
+})
+
+// ===== SISTEMAS =====
+
+// Obter todos os sistemas
+app.get('/make-server-c70d4af9/sistemas', async (c) => {
+  try {
+    const sistemas = await kv.getByPrefix('sistema:')
+    console.log('Sistemas recuperados:', sistemas.length)
+    return c.json({ sistemas: sistemas || [] })
+  } catch (error) {
+    console.error('Erro ao buscar sistemas:', error)
+    return c.json({ error: 'Erro ao buscar sistemas', details: String(error) }, 500)
+  }
+})
+
+// Adicionar novo sistema
+app.post('/make-server-c70d4af9/sistemas', async (c) => {
+  try {
+    const body = await c.req.json()
+    const { nome } = body
+
+    if (!nome) {
+      return c.json({ error: 'Nome do sistema é obrigatório' }, 400)
+    }
+
+    const id = `sistema:${Date.now()}`
+    const novoSistema: Sistema = {
+      id,
+      nome,
+      dataCriacao: new Date().toISOString()
+    }
+
+    await kv.set(id, novoSistema)
+    console.log('Sistema adicionado:', novoSistema)
+    return c.json({ sistema: novoSistema }, 201)
+  } catch (error) {
+    console.error('Erro ao adicionar sistema:', error)
+    return c.json({ error: 'Erro ao adicionar sistema', details: String(error) }, 500)
+  }
+})
+
+// Deletar sistema
+app.delete('/make-server-c70d4af9/sistemas/:id', async (c) => {
+  try {
+    const id = c.req.param('id')
+    await kv.del(id)
+    console.log('Sistema deletado:', id)
+    return c.json({ success: true })
+  } catch (error) {
+    console.error('Erro ao deletar sistema:', error)
+    return c.json({ error: 'Erro ao deletar sistema', details: String(error) }, 500)
+  }
+})
+
+// ===== MOTIVOS DE BACKUP =====
+
+// Obter todos os motivos
+app.get('/make-server-c70d4af9/motivos-backup', async (c) => {
+  try {
+    const motivos = await kv.getByPrefix('motivo:')
+    console.log('Motivos recuperados:', motivos.length)
+    return c.json({ motivos: motivos || [] })
+  } catch (error) {
+    console.error('Erro ao buscar motivos:', error)
+    return c.json({ error: 'Erro ao buscar motivos', details: String(error) }, 500)
+  }
+})
+
+// Adicionar motivo de backup
+app.post('/make-server-c70d4af9/motivos-backup', async (c) => {
+  try {
+    const body = await c.req.json()
+    const { clienteId, clienteNome, analista, motivo } = body
+
+    if (!clienteId || !clienteNome || !analista || !motivo) {
+      return c.json({ error: 'Todos os campos são obrigatórios' }, 400)
+    }
+
+    const id = `motivo:${Date.now()}`
+    const novoMotivo: MotivoBackup = {
+      id,
+      clienteId,
+      clienteNome,
+      analista,
+      motivo,
+      data: new Date().toISOString()
+    }
+
+    await kv.set(id, novoMotivo)
+    console.log('Motivo adicionado:', novoMotivo)
+    return c.json({ motivo: novoMotivo }, 201)
+  } catch (error) {
+    console.error('Erro ao adicionar motivo:', error)
+    return c.json({ error: 'Erro ao adicionar motivo', details: String(error) }, 500)
   }
 })
 
