@@ -57,6 +57,7 @@ export default function App() {
   const [sistemas, setSistemas] = useState<Sistema[]>([])
   const [motivosBackup, setMotivosBackup] = useState<MotivoBackup[]>([])
   const [loading, setLoading] = useState(true)
+  const [salvando, setSalvando] = useState(false)
   const [abaSelecionada, setAbaSelecionada] = useState<AbaType>('pendentes')
   const [pesquisa, setPesquisa] = useState('')
   const [ultimoReset, setUltimoReset] = useState<string | null>(null)
@@ -314,10 +315,12 @@ export default function App() {
   }
 
   const atualizarStatusCliente = async () => {
-    if (!clienteSelecionado) return
+    if (!clienteSelecionado || salvando) return
 
     try {
-      const atencao = statusForm.statusEnvio === 'Enviado' && statusForm.statusBackup === 'Pendente'
+      setSalvando(true)
+      console.log('🔄 Atualizando cliente:', clienteSelecionado.id)
+      console.log('📝 Novo status:', statusForm)
       
       const res = await fetch(`${API_URL}/clientes/${clienteSelecionado.id}`, {
         method: 'PUT',
@@ -325,29 +328,44 @@ export default function App() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${publicAnonKey}`
         },
-        body: JSON.stringify({
-          ...statusForm,
-          atencao
-        })
+        body: JSON.stringify(statusForm)
       })
 
       if (res.ok) {
+        const data = await res.json()
+        console.log('✅ Cliente atualizado:', data.cliente)
+        
+        // Atualizar cliente na lista local (mais rápido)
+        setClientes(prev => prev.map(c => c.id === data.cliente.id ? data.cliente : c))
+        
         setShowModalStatus(false)
         setClienteSelecionado(null)
-        await carregarDados()
+        alert('✅ Status atualizado com sucesso!')
+      } else {
+        const error = await res.json()
+        console.error('❌ Erro ao atualizar:', error)
+        alert('❌ Erro ao atualizar: ' + error.error)
       }
     } catch (error) {
-      console.error('Erro ao atualizar status:', error)
+      console.error('❌ Erro ao atualizar status:', error)
+      alert('❌ Erro ao atualizar status: ' + error)
+    } finally {
+      setSalvando(false)
     }
   }
 
   const salvarMotivoBackup = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!clienteSelecionado || !motivoBackup.trim()) return
+    if (!clienteSelecionado || !motivoBackup.trim()) {
+      alert('❌ Digite um motivo válido')
+      return
+    }
 
     try {
+      console.log('💾 Salvando motivo de backup...')
+      
       // Salvar motivo no banco
-      await fetch(`${API_URL}/motivos-backup`, {
+      const motivoRes = await fetch(`${API_URL}/motivos-backup`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -356,13 +374,18 @@ export default function App() {
         body: JSON.stringify({
           clienteId: clienteSelecionado.id,
           clienteNome: clienteSelecionado.nome,
-          analista: statusForm.analista,
-          motivo: motivoBackup
+          analista: statusForm.analista || 'Não informado',
+          motivo: motivoBackup.trim()
         })
       })
 
-      // Atualizar cliente
-      await fetch(`${API_URL}/clientes/${clienteSelecionado.id}`, {
+      if (!motivoRes.ok) {
+        const error = await motivoRes.json()
+        throw new Error(error.error || 'Erro ao salvar motivo')
+      }
+
+      // Atualizar cliente com motivo e status
+      const clienteRes = await fetch(`${API_URL}/clientes/${clienteSelecionado.id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -370,25 +393,33 @@ export default function App() {
         },
         body: JSON.stringify({
           ...statusForm,
-          atencao: true,
-          motivoSemBackup: motivoBackup
+          motivoSemBackup: motivoBackup.trim()
         })
       })
 
+      if (!clienteRes.ok) {
+        const error = await clienteRes.json()
+        throw new Error(error.error || 'Erro ao atualizar cliente')
+      }
+
+      console.log('✅ Motivo salvo com sucesso!')
       setShowModalMotivo(false)
       setMotivoBackup('')
       setClienteSelecionado(null)
       await carregarDados()
-      alert('Status atualizado e motivo registrado!')
+      alert('✅ Status atualizado e motivo registrado!')
     } catch (error) {
-      console.error('Erro ao salvar motivo:', error)
-      alert('Erro ao salvar motivo.')
+      console.error('❌ Erro ao salvar motivo:', error)
+      alert('❌ Erro ao salvar motivo: ' + error)
     }
   }
 
   const togglePrioridade = async (id: string, prioritarioAtual: boolean) => {
+    if (salvando) return
+    
     try {
-      await fetch(`${API_URL}/clientes/${id}`, {
+      setSalvando(true)
+      const res = await fetch(`${API_URL}/clientes/${id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -396,25 +427,54 @@ export default function App() {
         },
         body: JSON.stringify({ prioritario: !prioritarioAtual })
       })
-      await carregarDados()
+      
+      if (res.ok) {
+        const data = await res.json()
+        // Atualizar localmente
+        setClientes(prev => prev.map(c => c.id === data.cliente.id ? data.cliente : c))
+      }
     } catch (error) {
       console.error('Erro ao atualizar prioridade:', error)
+    } finally {
+      setSalvando(false)
     }
   }
 
   const toggleAtivo = async (id: string, ativoAtual: boolean) => {
+    if (salvando) return
+    
     try {
-      await fetch(`${API_URL}/clientes/${id}`, {
+      setSalvando(true)
+      const novoStatus = !ativoAtual
+      console.log('🔄 Alterando status ativo:', id, 'Novo:', novoStatus)
+      
+      const res = await fetch(`${API_URL}/clientes/${id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${publicAnonKey}`
         },
-        body: JSON.stringify({ ativo: !ativoAtual })
+        body: JSON.stringify({ ativo: novoStatus })
       })
-      await carregarDados()
+      
+      if (res.ok) {
+        const data = await res.json()
+        console.log('✅ Cliente atualizado:', data.cliente)
+        
+        // Atualizar localmente
+        setClientes(prev => prev.map(c => c.id === data.cliente.id ? data.cliente : c))
+        
+        alert(novoStatus ? '✅ Cliente reativado!' : '✅ Cliente desativado!')
+      } else {
+        const error = await res.json()
+        console.error('❌ Erro:', error)
+        alert('❌ Erro ao alterar status: ' + error.error)
+      }
     } catch (error) {
-      console.error('Erro ao atualizar status ativo:', error)
+      console.error('❌ Erro ao atualizar status ativo:', error)
+      alert('❌ Erro ao atualizar status ativo: ' + error)
+    } finally {
+      setSalvando(false)
     }
   }
 
