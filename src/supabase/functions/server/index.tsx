@@ -6,8 +6,22 @@ import * as kv from './kv_store.tsx'
 const app = new Hono()
 
 // CORS e Logger
-app.use('*', cors())
+app.use('*', cors({
+  origin: '*',
+  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization'],
+}))
 app.use('*', logger(console.log))
+
+// Middleware de erro global
+app.onError((err, c) => {
+  console.error('❌ Erro no servidor:', err)
+  return c.json({ 
+    error: 'Erro interno do servidor', 
+    message: err.message,
+    details: err.toString()
+  }, 500)
+})
 
 // ==================== INTERFACES ====================
 
