@@ -364,9 +364,56 @@ Gestão Sistemas
       return
     }
     
-    // Outros casos: atualizar state
+    // Outros casos: atualizar state E banco de dados
     console.log('➡️ Atualizando:', campo, '=', novoValor)
-    setClientes(prev => prev.map(c => c.id === clienteId ? { ...c, [campo]: novoValor } : c))
+    
+    try {
+      const mesAtual = new Date().toISOString().slice(0, 7)
+      
+      // Determinar qual aba o cliente deve ir baseado nos status
+      let novaAba: AbaCliente = cliente.abaAtual || 'pendentes'
+      
+      // Criar cópia atualizada do cliente para análise
+      const clienteAtualizado = { ...cliente, [campo]: novoValor }
+      
+      // Lógica de posicionamento nas abas
+      if (clienteAtualizado.statusEnvio === 'Enviado' && clienteAtualizado.statusBackup === 'Feito') {
+        novaAba = 'concluidos'
+      } else if (clienteAtualizado.statusEnvio === 'Enviado' && clienteAtualizado.statusBackup === 'Pendente') {
+        if (clienteAtualizado.motivoSemBackup) {
+          novaAba = 'atencao'
+        } else {
+          novaAba = 'backupCritico'
+        }
+      } else if (clienteAtualizado.statusEnvio !== 'Enviado' && clienteAtualizado.statusBackup === 'Feito') {
+        novaAba = 'atencao'
+      } else if (clienteAtualizado.statusEnvio !== 'Enviado' && clienteAtualizado.statusBackup === 'Pendente') {
+        novaAba = 'pendentes'
+      }
+      
+      // Atualizar no banco de dados
+      await supabase.updateCliente(clienteId, {
+        [campo]: novoValor,
+        abaAtual: novaAba,
+        mesReferencia: mesAtual
+      })
+      
+      // Atualizar estado local
+      setClientes(prev => prev.map(c => 
+        c.id === clienteId 
+          ? { ...c, [campo]: novoValor, abaAtual: novaAba, mesReferencia: mesAtual } 
+          : c
+      ))
+      
+      console.log('✅ Status atualizado com sucesso! Aba:', novaAba)
+    } catch (error) {
+      console.error('Erro ao atualizar status:', error)
+      setNotificacao({
+        tipo: 'erro',
+        titulo: 'Erro ao Atualizar',
+        mensagem: 'Não foi possível atualizar o status. Tente novamente.'
+      })
+    }
   }
 
   const marcarComoConcluido = async (clienteId: string) => {

@@ -50,7 +50,7 @@ export function Notificacao({ tipo, titulo, mensagem, onFechar }: NotificacaoPro
   return (
     <div className="fixed inset-0 bg-black/70 z-[100] overflow-y-auto">
       <div className="flex items-center justify-center min-h-screen p-4">
-        <div className="bg-[#0A2F2F] rounded-xl max-w-md w-full p-6 border-2 ${config.bordaCor} shadow-2xl my-8 animate-in fade-in zoom-in duration-200">
+        <div className={`bg-[#0A2F2F] rounded-xl max-w-md w-full p-6 border-2 ${config.bordaCor} shadow-2xl my-8 animate-in fade-in zoom-in duration-200`}>
           <div className={`w-16 h-16 rounded-full ${config.bgCor} flex items-center justify-center mx-auto mb-4`}>
             <Icone className={`w-8 h-8 ${config.iconeCor}`} />
           </div>
