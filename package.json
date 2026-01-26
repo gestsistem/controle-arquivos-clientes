@@ -48,8 +48,7 @@
           "sonner": "^2.0.3",
           "tailwind-merge": "*",
           "vaul": "^1.1.2",
-          "vite": "*",
-          "xlsx": "*"
+          "vite": "*"
       },
       "devDependencies": {
           "@types/node": "^20.10.0",

@@ -8,6 +8,21 @@ Sistema **completo**, **otimizado** e **profissional** de gestão de clientes co
 
 ---
 
+## 🚀 INÍCIO RÁPIDO
+
+### ⚡ Tem um erro do Supabase?
+Se você viu o erro: `ERROR: column "ativo" does not exist`
+
+👉 **Abra:** `START_HERE.md` ou `SOLUCAO_2_MINUTOS.md`
+
+### 🎨 Quer ativar o design moderno?
+👉 **Abra:** `COMO_ATIVAR_DESIGN_MODERNO.md`
+
+### 📚 Ver todos os guias disponíveis?
+👉 **Abra:** `NAVEGACAO_RAPIDA.md` ou `INDICE_ARQUIVOS.md`
+
+---
+
 ## ✨ Funcionalidades Implementadas
 
 ### 📋 **Gestão de Clientes**

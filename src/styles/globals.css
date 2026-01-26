@@ -183,3 +183,17 @@
 html {
   font-size: var(--font-size);
 }
+
+/* Corrigir visualização dos selects - dropdown legível */
+select option {
+  background-color: #0D3B3B !important;
+  color: #ffffff !important;
+  padding: 8px !important;
+}
+
+select option:hover,
+select option:checked,
+select option:focus {
+  background-color: #7FB069 !important;
+  color: #ffffff !important;
+}
