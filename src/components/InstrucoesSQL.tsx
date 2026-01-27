@@ -6,23 +6,36 @@ export function InstrucoesSQL() {
   const [selecionado, setSelecionado] = React.useState(false)
   const codeRef = React.useRef<HTMLPreElement>(null)
 
-  const sqlScript = `-- Adicionar colunas mes_referencia, mes_atrasado, cnpj e motivo_sem_backup na tabela clientes
+  const sqlScript = `-- Adicionar colunas mes_referencia, mes_atrasado, cnpj, motivo_sem_backup e aba_atual na tabela clientes
 
 ALTER TABLE clientes
 ADD COLUMN IF NOT EXISTS mes_referencia TEXT,
 ADD COLUMN IF NOT EXISTS mes_atrasado TEXT,
 ADD COLUMN IF NOT EXISTS cnpj TEXT,
-ADD COLUMN IF NOT EXISTS motivo_sem_backup TEXT;
+ADD COLUMN IF NOT EXISTS motivo_sem_backup TEXT,
+ADD COLUMN IF NOT EXISTS aba_atual TEXT;
 
 -- Atualizar valores padrão para mês atual nos clientes existentes
 UPDATE clientes
 SET mes_referencia = TO_CHAR(CURRENT_DATE, 'YYYY-MM')
 WHERE mes_referencia IS NULL;
 
+-- Definir aba_atual padrão baseada nos status existentes
+UPDATE clientes
+SET aba_atual = CASE
+  WHEN status_envio = 'Enviado' AND status_backup = 'Feito' THEN 'concluidos'
+  WHEN status_envio = 'Enviado' AND status_backup = 'Pendente' AND motivo_sem_backup IS NOT NULL THEN 'atencao'
+  WHEN status_envio = 'Enviado' AND status_backup = 'Pendente' AND motivo_sem_backup IS NULL THEN 'backupCritico'
+  WHEN status_envio != 'Enviado' AND status_backup = 'Feito' THEN 'atencao'
+  ELSE 'pendentes'
+END
+WHERE aba_atual IS NULL;
+
 -- Índices para melhorar performance
 CREATE INDEX IF NOT EXISTS idx_clientes_mes_referencia ON clientes(mes_referencia);
 CREATE INDEX IF NOT EXISTS idx_clientes_mes_atrasado ON clientes(mes_atrasado);
-CREATE INDEX IF NOT EXISTS idx_clientes_cnpj ON clientes(cnpj);`
+CREATE INDEX IF NOT EXISTS idx_clientes_cnpj ON clientes(cnpj);
+CREATE INDEX IF NOT EXISTS idx_clientes_aba_atual ON clientes(aba_atual);`
 
   const copiarSQL = async () => {
     let copiouComSucesso = false
@@ -91,7 +104,7 @@ CREATE INDEX IF NOT EXISTS idx_clientes_cnpj ON clientes(cnpj);`
         <div className="flex-1">
           <h3 className="text-xl font-bold text-yellow-400 mb-2">⚠️ Atualização de Banco de Dados Necessária</h3>
           <p className="text-white mb-4">
-            Para usar os novos recursos (filtro de mês, CNPJ e justificativas), você precisa adicionar as colunas <code className="bg-black/30 px-2 py-1 rounded text-yellow-300">mes_referencia</code>, <code className="bg-black/30 px-2 py-1 rounded text-yellow-300">mes_atrasado</code>, <code className="bg-black/30 px-2 py-1 rounded text-yellow-300">cnpj</code> e <code className="bg-black/30 px-2 py-1 rounded text-yellow-300">motivo_sem_backup</code> no Supabase.
+            Para usar os novos recursos (filtro de mês, CNPJ, justificativas e abas automáticas), você precisa adicionar as colunas <code className="bg-black/30 px-2 py-1 rounded text-yellow-300">mes_referencia</code>, <code className="bg-black/30 px-2 py-1 rounded text-yellow-300">mes_atrasado</code>, <code className="bg-black/30 px-2 py-1 rounded text-yellow-300">cnpj</code>, <code className="bg-black/30 px-2 py-1 rounded text-yellow-300">motivo_sem_backup</code> e <code className="bg-black/30 px-2 py-1 rounded text-yellow-300">aba_atual</code> no Supabase.
           </p>
           
           <div className="bg-black/30 rounded-lg p-4 mb-4 relative">

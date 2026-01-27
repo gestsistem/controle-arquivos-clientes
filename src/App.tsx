@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { Search, Plus, RefreshCw, Check, X, Clock, AlertTriangle, Download, Upload, BarChart3, Settings, Users, Home, Zap, Lock, AlertCircle, Bell, RotateCcw, Eye, List, Edit, Trash2, Copy } from 'lucide-react'
+import * as XLSX from 'xlsx'
 import * as supabase from './utils/supabaseClient'
 import logoGestao from 'figma:asset/a321a7617817ca81ff7148355ebf7ba1e1aa7b03.png'
 import { InstrucoesSQL } from './components/InstrucoesSQL'
@@ -9,7 +10,7 @@ import { DashboardGraficos } from './components/DashboardGraficos'
 const SENHA_ADMIN = 'Gestao2042**'
 
 type StatusEnvio = 'Enviado' | 'Pendente' | 'Recém Implantado' | 'Gerencial' | 'Inativo' | 'Não Teve Vendas' | 'Bloqueio SEFAZ' | 'Bloqueio Financeiro'
-type AbaType = 'dashboard' | 'pendentes' | 'concluidos' | 'backupCritico' | 'atencao' | 'atrasados' | 'listagem' | 'relatorios' | 'configuracoes'
+type AbaType = 'dashboard' | 'pendentes' | 'concluidos' | 'backupCritico' | 'atencao' | 'atrasados' | 'listagem' | 'configuracoes'
 type AbaCliente = 'pendentes' | 'concluidos' | 'backupCritico' | 'atencao'
 
 interface Cliente {
@@ -76,6 +77,8 @@ export default function App() {
   const [notificacao, setNotificacao] = useState<{tipo: 'sucesso' | 'erro' | 'aviso' | 'info', titulo: string, mensagem: string} | null>(null)
   const [confirmacaoExclusao, setConfirmacaoExclusao] = useState<{tipo: 'sistema' | 'analista', item: any} | null>(null)
   
+  const [colunaAbaAtualExiste, setColunaAbaAtualExiste] = useState(true)
+  
   const [novoCliente, setNovoCliente] = useState({ nome: '', sistema: '', emails: [''], telefone: '', cnpj: '', analista: '' })
   const [novoSistema, setNovoSistema] = useState({ nome: '' })
   const [novoAnalista, setNovoAnalista] = useState({ nome: '' })
@@ -93,31 +96,46 @@ export default function App() {
         supabase.getAnalistas()
       ])
       
-      // DEBUG: Ver quantos inativos
-      const totalInativos = clientesData.filter((c: Cliente) => c.ativo === false).length
-      console.log('🔍 Total clientes:', clientesData.length, '| Inativos:', totalInativos)
+      // Verificar se a coluna aba_atual existe
+      if (clientesData.length > 0 && clientesData[0].abaAtual !== undefined) {
+        setColunaAbaAtualExiste(true)
+      } else if (clientesData.length > 0) {
+        setColunaAbaAtualExiste(false)
+        console.warn('⚠️ Coluna aba_atual NÃO existe no banco!')
+      }
       
       // Calcular abaAtual automaticamente baseado nos status (MANTER TODOS, inclusive inativos)
       const clientesComAba = clientesData.map((c: Cliente) => {
+        const mesAtual = new Date().toISOString().slice(0, 7)
+        
         // Se INATIVO, manter como está sem processar abaAtual
         if (c.ativo === false) {
           return {
             ...c,
             abaAtual: c.abaAtual || 'pendentes',
-            mesReferencia: c.mesReferencia || new Date().toISOString().slice(0, 7)
+            mesReferencia: c.mesReferencia || mesAtual
           }
         }
         
-        // APENAS PROCESSAR abaAtual para clientes ATIVOS
+        // SE JÁ TEM abaAtual salva no banco, USAR ELA (não recalcular!)
+        if (c.abaAtual && c.abaAtual !== 'pendentes') {
+          return {
+            ...c,
+            mesReferencia: c.mesReferencia || mesAtual,
+            mesAtrasado: (c.atrasado && !c.mesAtrasado) ? mesAtual : c.mesAtrasado
+          }
+        }
+        
+        // SE NÃO TEM abaAtual, calcular pela primeira vez
         let abaCalculada: AbaCliente = 'pendentes'
         
         // Regra 0: ATRASADOS sempre vão para aba Atrasados (PRIORIDADE MÁXIMA)
         if (c.atrasado) {
           return {
             ...c,
-            abaAtual: 'pendentes', // Atrasados não têm aba própria no tipo AbaCliente
-            mesReferencia: c.mesReferencia || new Date().toISOString().slice(0, 7),
-            mesAtrasado: (c.atrasado && !c.mesAtrasado) ? new Date().toISOString().slice(0, 7) : c.mesAtrasado
+            abaAtual: 'pendentes',
+            mesReferencia: c.mesReferencia || mesAtual,
+            mesAtrasado: (c.atrasado && !c.mesAtrasado) ? mesAtual : c.mesAtrasado
           }
         }
         
@@ -125,18 +143,11 @@ export default function App() {
         if (statusEspeciais.includes(c.statusEnvio)) {
           abaCalculada = 'atencao'
         }
-        // Regra 2: Enviado + Feito → Concluídos
-        else if (c.statusEnvio === 'Enviado' && c.statusBackup === 'Feito') {
-          abaCalculada = 'concluidos'
-        }
-        // Regra 3: Enviado + Pendente → Backup Crítico (SEMPRE)
+        // Regra 2: Enviado + Pendente → Backup Crítico (SEMPRE)
         else if (c.statusEnvio === 'Enviado' && c.statusBackup === 'Pendente') {
           abaCalculada = 'backupCritico'
         }
-        // Regra 4: Resto → Pendentes (DEFAULT)
-        
-        // Definir mês atual para campos vazios
-        const mesAtual = new Date().toISOString().slice(0, 7)
+        // Regra 3: Resto → Pendentes (DEFAULT)
         
         return {
           ...c,
@@ -146,13 +157,7 @@ export default function App() {
         }
       })
       
-      // DEBUG: Ver se analistaBackup está vindo do banco
-      const comBackup = clientesComAba.filter((c: any) => c.analistaBackup)
-      console.log('📊 Clientes carregados:', clientesComAba.length, '| Com analistaBackup:', comBackup.length)
-      if (comBackup.length > 0) {
-        console.log('🟢 Tem analistaBackup:', comBackup.map((c: any) => `${c.nome} → ${c.analistaBackup}`))
-      }
-      
+      // DEBUG: Ver distribuição nas abas
       setClientes(clientesComAba)
       setSistemas(sistemasData)
       setAnalistas(analistasData)
@@ -289,7 +294,7 @@ Gestão Sistemas
   }
 
   const finalizarCliente = async () => {
-    if (!clienteEmail || !analistaEmailNome) return
+    if (!clienteEmail || !analistaEmailNome || !analistaBackup) return
     
     try {
       const mesAtual = new Date().toISOString().slice(0, 7)
@@ -299,7 +304,7 @@ Gestão Sistemas
           statusEnvio: 'Enviado',
           statusBackup: 'Feito',
           analista: analistaEmailNome,
-          analistaBackup: clienteEmail.analistaBackup,
+          analistaBackup: analistaBackup,
           mesReferencia: mesAtual,
           abaAtual: 'concluidos'
         })
@@ -308,31 +313,29 @@ Gestão Sistemas
           statusEnvio: 'Enviado',
           statusBackup: 'Feito',
           analista: analistaEmailNome,
-          analistaBackup: clienteEmail.analistaBackup,
+          analistaBackup: analistaBackup,
           abaAtual: 'concluidos'
         })
       }
       
       setClientes(prev => prev.map(c => 
         c.id === clienteEmail.id 
-          ? { ...c, statusEnvio: 'Enviado' as StatusEnvio, statusBackup: 'Feito' as const, abaAtual: 'concluidos' as AbaCliente, analista: analistaEmailNome, analistaBackup: clienteEmail.analistaBackup, mesReferencia: mesAtual } 
+          ? { ...c, statusEnvio: 'Enviado' as StatusEnvio, statusBackup: 'Feito' as const, abaAtual: 'concluidos' as AbaCliente, analista: analistaEmailNome, analistaBackup: analistaBackup, mesReferencia: mesAtual } 
           : c
       ))
       
       setShowModalEmail(false)
       setClienteEmail(null)
       setAnalistaEmailNome('')
+      setAnalistaBackup('')
       setClienteEnvio(null)
       setAnalistaEnvio('')
       
-      setTimeout(() => {
-        setAbaSelecionada('concluidos')
-        setNotificacao({
+      setNotificacao({
           tipo: 'sucesso',
           titulo: 'Cliente Concluído!',
-          mensagem: 'Envio: ' + analistaEmailNome + '\nBackup: ' + clienteEmail.analistaBackup + '\n\nCliente movido para Concluídos!'
-        })
-      }, 300)
+          mensagem: 'Envio: ' + analistaEmailNome + '\nBackup: ' + analistaBackup + '\n\nCliente movido para Concluídos!'
+      })
     } catch (error) {
       console.error('Erro ao finalizar:', error)
       setNotificacao({
@@ -347,11 +350,8 @@ Gestão Sistemas
     const cliente = clientes.find(c => c.id === clienteId)
     if (!cliente) return
 
-    console.log('🔷 Mudando:', campo, '→', novoValor, '| Atual:', cliente[campo])
-    
     // Se já é o mesmo valor, não fazer nada
     if (cliente[campo] === novoValor) {
-      console.log('⚠️ Valor já é esse, ignorando')
       return
     }
     
@@ -371,48 +371,45 @@ Gestão Sistemas
       const mesAtual = new Date().toISOString().slice(0, 7)
       
       // Determinar qual aba o cliente deve ir baseado nos status
-      let novaAba: AbaCliente = cliente.abaAtual || 'pendentes'
-      
-      // Criar cópia atualizada do cliente para análise
-      const clienteAtualizado = { ...cliente, [campo]: novoValor }
-      
-      // Lógica de posicionamento nas abas
-      if (clienteAtualizado.statusEnvio === 'Enviado' && clienteAtualizado.statusBackup === 'Feito') {
-        novaAba = 'concluidos'
-      } else if (clienteAtualizado.statusEnvio === 'Enviado' && clienteAtualizado.statusBackup === 'Pendente') {
-        if (clienteAtualizado.motivoSemBackup) {
-          novaAba = 'atencao'
-        } else {
-          novaAba = 'backupCritico'
-        }
-      } else if (clienteAtualizado.statusEnvio !== 'Enviado' && clienteAtualizado.statusBackup === 'Feito') {
-        novaAba = 'atencao'
-      } else if (clienteAtualizado.statusEnvio !== 'Enviado' && clienteAtualizado.statusBackup === 'Pendente') {
-        novaAba = 'pendentes'
-      }
+      // Não mover cliente de aba ao alterar status manualmente
+      // O cliente só deve ir para "Concluídos" ao clicar no botão "Concluir"
+      const novaAba: AbaCliente = cliente.abaAtual || 'pendentes'
       
       // Atualizar no banco de dados
-      await supabase.updateCliente(clienteId, {
+      const updateData = {
         [campo]: novoValor,
         abaAtual: novaAba,
         mesReferencia: mesAtual
-      })
+      }
+      await supabase.updateCliente(clienteId, updateData)
       
       // Atualizar estado local
-      setClientes(prev => prev.map(c => 
-        c.id === clienteId 
-          ? { ...c, [campo]: novoValor, abaAtual: novaAba, mesReferencia: mesAtual } 
-          : c
-      ))
+      setClientes(prev => 
+        prev.map(c => 
+          c.id === clienteId 
+            ? { ...c, [campo]: novoValor, abaAtual: novaAba, mesReferencia: mesAtual } 
+            : c
+        )
+      )
       
       console.log('✅ Status atualizado com sucesso! Aba:', novaAba)
-    } catch (error) {
-      console.error('Erro ao atualizar status:', error)
-      setNotificacao({
-        tipo: 'erro',
-        titulo: 'Erro ao Atualizar',
-        mensagem: 'Não foi possível atualizar o status. Tente novamente.'
-      })
+    } catch (error: any) {
+      console.error('❌ Erro ao atualizar status:', error)
+      
+      // Se o erro for sobre coluna aba_atual, alertar usuário
+      if (error.message && error.message.includes('aba_atual')) {
+        setNotificacao({
+          tipo: 'erro',
+          titulo: '⚠️ Banco Desatualizado',
+          mensagem: 'A coluna "aba_atual" não existe no Supabase. Execute o script SQL para criar a coluna.'
+        })
+      } else {
+        setNotificacao({
+          tipo: 'erro',
+          titulo: 'Erro ao Atualizar',
+          mensagem: error.message || 'Não foi possível atualizar o status. Tente novamente.'
+        })
+      }
     }
   }
 
@@ -425,7 +422,8 @@ Gestão Sistemas
       if (statusEspeciais.includes(cliente.statusEnvio)) {
         await supabase.updateCliente(clienteId, { 
           statusEnvio: cliente.statusEnvio,
-          statusBackup: cliente.statusBackup
+          statusBackup: cliente.statusBackup,
+          abaAtual: 'atencao'
         })
         setClientes(prev => prev.map(c => 
           c.id === clienteId ? { ...c, abaAtual: 'atencao' as AbaCliente } : c
@@ -441,10 +439,11 @@ Gestão Sistemas
         return
       }
 
-      // Abrir modal para perguntar qual analista está enviando
-      setClienteEnvio(cliente)
-      setAnalistaEnvio(cliente.analista || '')
-      setShowModalEnvio(true)
+      // Abrir modal de email/finalização
+      setClienteEmail(cliente)
+      setAnalistaEmailNome(cliente.analista || '')
+      setAnalistaBackup(cliente.analistaBackup || '')
+      setShowModalEmail(true)
     } catch (error) {
       setNotificacao({
         tipo: 'erro',
@@ -511,13 +510,14 @@ Gestão Sistemas
     try {
       const mesAtual = new Date().toISOString().slice(0, 7)
       
-      // Salvar status, analista, justificativa e mesReferencia
+      // Salvar status, analista, justificativa, abaAtual e mesReferencia
       try {
         await supabase.updateCliente(clienteMotivo.id, { 
           statusEnvio: clienteMotivo.statusEnvio,
           statusBackup: clienteMotivo.statusBackup,
           analista: clienteMotivo.analista,
           motivoSemBackup: motivoBackup,
+          abaAtual: 'backupCritico',
           mesReferencia: mesAtual
         })
       } catch (err) {
@@ -525,7 +525,8 @@ Gestão Sistemas
           statusEnvio: clienteMotivo.statusEnvio,
           statusBackup: clienteMotivo.statusBackup,
           analista: clienteMotivo.analista,
-          motivoSemBackup: motivoBackup
+          motivoSemBackup: motivoBackup,
+          abaAtual: 'backupCritico'
         })
       }
       
@@ -553,30 +554,25 @@ Gestão Sistemas
   }
 
   const confirmarAnalistaBackup = async () => {
-    console.log('⚠️⚠️⚠️ CONFIRMAR BACKUP CHAMADO!')
-    console.log('   Cliente:', clienteBackup?.nome)
-    console.log('   Analista:', analistaBackup)
-    
     if (!clienteBackup || !analistaBackup.trim()) {
-      console.log('❌ Cancelado - dados vazios')
       return
     }
     
     try {
       const mesAtual = new Date().toISOString().slice(0, 7)
       
-      console.log('🔵 Salvando APENAS backup - NÃO move para concluídos')
-      
       // APENAS salvar statusBackup + analistaBackup
       // NÃO alterar abaAtual, statusEnvio, etc
+      const dadosBackup = { 
+        statusBackup: 'Feito', 
+        analistaBackup: analistaBackup,
+        mesReferencia: mesAtual
+      }
+      
       try {
-        await supabase.updateCliente(clienteBackup.id, { 
-          statusBackup: 'Feito', 
-          analistaBackup: analistaBackup,
-          mesReferencia: mesAtual
-        })
-        console.log('✅ Backup salvo')
+        await supabase.updateCliente(clienteBackup.id, dadosBackup)
       } catch (err) {
+        console.error('❌ Erro ao salvar backup com mesReferencia, tentando sem:', err)
         await supabase.updateCliente(clienteBackup.id, { 
           statusBackup: 'Feito', 
           analistaBackup: analistaBackup
@@ -610,9 +606,139 @@ Gestão Sistemas
     }
   }
 
+  const gerarRelatorioExcelReset = (clientesDoMes: Cliente[], mesReferencia: string) => {
+    // Preparar dados para o Excel
+    const mesFormatado = formatarMes(mesReferencia)
+    
+    // ABA 1: RESUMO GERAL
+    const resumoGeral = [{
+      'MÊS': mesFormatado,
+      'TOTAL CLIENTES': clientesDoMes.length,
+      'ENVIADOS ✅': clientesDoMes.filter(c => c.statusEnvio === 'Enviado').length,
+      'PENDENTES ⏳': clientesDoMes.filter(c => c.statusEnvio !== 'Enviado').length,
+      'BACKUP FEITO 💾': clientesDoMes.filter(c => c.statusBackup === 'Feito').length,
+      'BACKUP PENDENTE': clientesDoMes.filter(c => c.statusBackup === 'Pendente').length,
+      'TAXA CONCLUSÃO': `${clientesDoMes.length > 0 ? Math.round((clientesDoMes.filter(c => c.statusEnvio === 'Enviado').length / clientesDoMes.length) * 100) : 0}%`
+    }]
+
+    // ABA 2: CLIENTES ENVIADOS
+    const clientesEnviados = clientesDoMes
+      .filter(c => c.statusEnvio === 'Enviado')
+      .map(c => ({
+        'NOME': c.nome,
+        'SISTEMA': c.sistema,
+        'ANALISTA': c.analista || '-',
+        'STATUS ENVIO': c.statusEnvio,
+        'STATUS BACKUP': c.statusBackup,
+        'BACKUP POR': c.analistaBackup || '-',
+        'TELEFONE': c.telefone || '-',
+        'URGENTE': c.urgente ? 'SIM' : 'NÃO'
+      }))
+
+    // ABA 3: CLIENTES PENDENTES (NÃO ENVIADOS)
+    const clientesPendentes = clientesDoMes
+      .filter(c => c.statusEnvio !== 'Enviado')
+      .map(c => ({
+        'NOME': c.nome,
+        'SISTEMA': c.sistema,
+        'ANALISTA': c.analista || '-',
+        'STATUS ENVIO': c.statusEnvio,
+        'STATUS BACKUP': c.statusBackup,
+        'TELEFONE': c.telefone || '-',
+        'URGENTE': c.urgente ? 'SIM' : 'NÃO',
+        'ATRASADO': c.atrasado ? 'SIM' : 'NÃO'
+      }))
+
+    // ABA 4: DESEMPENHO POR ANALISTA
+    const desempenhoPorAnalista = analistas.map(analista => {
+      const clientesAnalista = clientesDoMes.filter(c => c.analista === analista.nome)
+      const enviados = clientesAnalista.filter(c => c.statusEnvio === 'Enviado').length
+      const backups = clientesAnalista.filter(c => c.statusBackup === 'Feito').length
+      
+      return {
+        'ANALISTA': analista.nome,
+        'TOTAL CLIENTES': clientesAnalista.length,
+        'ENVIADOS': enviados,
+        'PENDENTES': clientesAnalista.length - enviados,
+        'TAXA ENVIO': clientesAnalista.length > 0 ? `${Math.round((enviados / clientesAnalista.length) * 100)}%` : '0%',
+        'BACKUPS FEITOS': backups,
+        'BACKUPS PENDENTES': clientesAnalista.length - backups,
+        'TAXA BACKUP': clientesAnalista.length > 0 ? `${Math.round((backups / clientesAnalista.length) * 100)}%` : '0%'
+      }
+    })
+
+    // ABA 5: DESEMPENHO POR SISTEMA
+    const desempenhoPorSistema = sistemas.map(sistema => {
+      const clientesSistema = clientesDoMes.filter(c => c.sistema?.toUpperCase() === sistema.nome.toUpperCase())
+      const enviados = clientesSistema.filter(c => c.statusEnvio === 'Enviado').length
+      
+      return {
+        'SISTEMA': sistema.nome,
+        'TOTAL CLIENTES': clientesSistema.length,
+        'ENVIADOS': enviados,
+        'PENDENTES': clientesSistema.length - enviados,
+        'TAXA CONCLUSÃO': clientesSistema.length > 0 ? `${Math.round((enviados / clientesSistema.length) * 100)}%` : '0%'
+      }
+    }).filter(s => s['TOTAL CLIENTES'] > 0)
+
+    // ABA 6: BACKUP CRÍTICO (JUSTIFICATIVAS)
+    const backupCritico = clientesDoMes
+      .filter(c => c.motivoSemBackup)
+      .map(c => ({
+        'NOME': c.nome,
+        'SISTEMA': c.sistema,
+        'ANALISTA': c.analista || '-',
+        'STATUS BACKUP': c.statusBackup,
+        'JUSTIFICATIVA': c.motivoSemBackup || '',
+        'RESOLVIDO POR': c.analistaBackup || '-'
+      }))
+
+    // ABA 7: CLIENTES ATRASADOS
+    const clientesAtrasados = clientesDoMes
+      .filter(c => c.atrasado)
+      .map(c => ({
+        'NOME': c.nome,
+        'SISTEMA': c.sistema,
+        'ANALISTA': c.analista || '-',
+        'STATUS ENVIO': c.statusEnvio,
+        'MÊS ATRASO': c.mesAtrasado ? formatarMes(c.mesAtrasado) : '-',
+        'TELEFONE': c.telefone || '-'
+      }))
+
+    // Criar workbook
+    const wb = XLSX.utils.book_new()
+    
+    // Adicionar planilhas
+    const ws1 = XLSX.utils.json_to_sheet(resumoGeral)
+    const ws2 = XLSX.utils.json_to_sheet(clientesEnviados.length > 0 ? clientesEnviados : [{ 'INFO': 'Nenhum cliente enviado' }])
+    const ws3 = XLSX.utils.json_to_sheet(clientesPendentes.length > 0 ? clientesPendentes : [{ 'INFO': 'Nenhum cliente pendente' }])
+    const ws4 = XLSX.utils.json_to_sheet(desempenhoPorAnalista)
+    const ws5 = XLSX.utils.json_to_sheet(desempenhoPorSistema)
+    const ws6 = XLSX.utils.json_to_sheet(backupCritico.length > 0 ? backupCritico : [{ 'INFO': 'Nenhuma justificativa' }])
+    const ws7 = XLSX.utils.json_to_sheet(clientesAtrasados.length > 0 ? clientesAtrasados : [{ 'INFO': 'Nenhum cliente atrasado' }])
+    
+    XLSX.utils.book_append_sheet(wb, ws1, '📊 RESUMO')
+    XLSX.utils.book_append_sheet(wb, ws2, '✅ ENVIADOS')
+    XLSX.utils.book_append_sheet(wb, ws3, '⏳ PENDENTES')
+    XLSX.utils.book_append_sheet(wb, ws4, '👥 POR ANALISTA')
+    XLSX.utils.book_append_sheet(wb, ws5, '💼 POR SISTEMA')
+    XLSX.utils.book_append_sheet(wb, ws6, '📝 BACKUP CRÍTICO')
+    XLSX.utils.book_append_sheet(wb, ws7, '⚠️ ATRASADOS')
+    
+    // Baixar arquivo
+    const nomeArquivo = `Relatorio_Mensal_${mesReferencia}.xlsx`
+    XLSX.writeFile(wb, nomeArquivo)
+    
+    return nomeArquivo
+  }
+
   const resetarMensal = async () => {
     try {
       const mesAtual = new Date().toISOString().slice(0, 7)
+      
+      // GERAR RELATÓRIO EXCEL ANTES DO RESET
+      const clientesDoMes = clientes.filter(c => c.ativo !== false && (!c.mesReferencia || c.mesReferencia === mesAtual))
+      gerarRelatorioExcelReset(clientesDoMes, mesAtual)
       
       // Buscar TODOS os clientes direto do banco
       const todosClientes = await supabase.getClientes()
@@ -634,7 +760,8 @@ Gestão Sistemas
               statusEnvio: 'Pendente',
               statusBackup: 'Pendente',
               atrasado: true,
-              mesReferencia: mesAtual
+              mesReferencia: mesAtual,
+              abaAtual: 'pendentes'
             })
             mantidos++
           } catch (err) {
@@ -648,10 +775,27 @@ Gestão Sistemas
           return
         }
         
-        // REGRA 2: BACKUP CRÍTICO COM JUSTIFICATIVA - MANTER
+        // REGRA 2: BACKUP CRÍTICO COM JUSTIFICATIVA - MANTER mas resetar abaAtual
         if (cliente.motivoSemBackup && cliente.statusEnvio === 'Enviado' && cliente.statusBackup === 'Pendente') {
-          mantidos++
-          return // Mantém backup crítico histórico
+          try {
+            await supabase.updateCliente(cliente.id, {
+              statusEnvio: 'Pendente',
+              statusBackup: 'Pendente',
+              atrasado: false,
+              mesReferencia: mesAtual,
+              abaAtual: 'pendentes'
+              // Mantém motivoSemBackup para histórico
+            })
+            mantidos++
+          } catch (err) {
+            await supabase.updateCliente(cliente.id, {
+              statusEnvio: 'Pendente',
+              statusBackup: 'Pendente',
+              atrasado: false
+            })
+            mantidos++
+          }
+          return
         }
         
         // REGRA 3: PENDENTES → MARCAR ATRASADO + VOLTAR PARA PENDENTE
@@ -662,7 +806,8 @@ Gestão Sistemas
               statusBackup: 'Pendente',
               atrasado: true,
               mesAtrasado: mesAtual,
-              mesReferencia: mesAtual
+              mesReferencia: mesAtual,
+              abaAtual: 'pendentes'
             })
             marcadosAtrasados++
           } catch (err) {
@@ -683,7 +828,8 @@ Gestão Sistemas
             statusBackup: 'Pendente',
             atrasado: false,
             motivoSemBackup: null,
-            mesReferencia: mesAtual
+            mesReferencia: mesAtual,
+            abaAtual: 'pendentes'
           })
           resetadosNormais++
         } catch (err) {
@@ -701,6 +847,8 @@ Gestão Sistemas
       // Recarregar dados do banco
       await carregarDados()
       
+      // DEBUG: Verificar distribuição após reset
+      const clientesAposReset = await supabase.getClientes()
       setShowModalReset(false)
       
       // Ir para aba Pendentes
@@ -912,6 +1060,8 @@ Gestão Sistemas
     atencao: clientes.filter(c => c.abaAtual === 'atencao').length,
     atrasados: clientes.filter(c => c.atrasado).length // TODOS OS ATRASADOS
   }
+  
+
 
   const alfabeto = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')
 
@@ -929,9 +1079,17 @@ Gestão Sistemas
 
   const todosOsMeses = gerarMeses()
 
+
   const relatoriosPorSistema = sistemas.map(sistema => {
-    const clientesSistema = clientes.filter(c => c.sistema === sistema.nome)
-    const concluidos = clientesSistema.filter(c => c.abaAtual === 'concluidos').length
+    // Filtrar por sistema e por mês (se filtroMes estiver ativo)
+    // CASE-INSENSITIVE para evitar problemas com maiúsculas/minúsculas
+    const clientesSistema = clientes.filter(c => 
+      c.sistema?.toUpperCase() === sistema.nome.toUpperCase() && 
+      c.ativo !== false &&
+      (!filtroMes || c.mesReferencia === filtroMes)
+    )
+    // Considerar concluído se statusEnvio === 'Enviado' (independente da aba atual)
+    const concluidos = clientesSistema.filter(c => c.statusEnvio === 'Enviado').length
     return {
       sistema: sistema.nome,
       total: clientesSistema.length,
@@ -942,8 +1100,14 @@ Gestão Sistemas
   })
 
   const relatoriosPorAnalista = analistas.map(analista => {
-    const clientesAnalista = clientes.filter(c => c.analista === analista.nome)
-    const concluidos = clientesAnalista.filter(c => c.abaAtual === 'concluidos').length
+    // Filtrar por analista e por mês (se filtroMes estiver ativo)
+    const clientesAnalista = clientes.filter(c => 
+      c.analista === analista.nome &&
+      c.ativo !== false &&
+      (!filtroMes || c.mesReferencia === filtroMes)
+    )
+    // Considerar concluído se statusEnvio === 'Enviado' (independente da aba atual)
+    const concluidos = clientesAnalista.filter(c => c.statusEnvio === 'Enviado').length
     return {
       analista: analista.nome,
       total: clientesAnalista.length,
@@ -1014,10 +1178,6 @@ Gestão Sistemas
             <span className="ml-auto bg-blue-500 text-white text-xs px-2 py-0.5 rounded-full">{stats.total}</span>
           </button>
           
-          <button onClick={() => setAbaSelecionada('relatorios')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg mb-2 transition-colors ${abaSelecionada === 'relatorios' ? 'bg-[#7FB069] text-white' : 'text-gray-300 hover:bg-[#0D3B3B]'}`}>
-            <BarChart3 className="w-5 h-5" /><span className="font-medium">Relatórios</span>
-          </button>
-          
           <button onClick={abrirConfiguracoes} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${abaSelecionada === 'configuracoes' ? 'bg-[#7FB069] text-white' : 'text-gray-300 hover:bg-[#0D3B3B]'}`}>
             <Settings className="w-5 h-5" /><span className="font-medium">Configurações</span><Lock className="w-4 h-4 ml-auto" />
           </button>
@@ -1041,13 +1201,43 @@ Gestão Sistemas
             {abaSelecionada === 'atencao' && 'Clientes que Precisam Atenção'}
             {abaSelecionada === 'atrasados' && 'Clientes Atrasados'}
             {abaSelecionada === 'listagem' && 'Clientes'}
-            {abaSelecionada === 'relatorios' && 'Relatórios Gerenciais'}
             {abaSelecionada === 'configuracoes' && 'Configurações'}
           </h2>
           <p className="text-gray-400 text-sm mt-1">
             {(abaSelecionada === 'pendentes' || abaSelecionada === 'concluidos' || abaSelecionada === 'backupCritico' || abaSelecionada === 'atencao' || abaSelecionada === 'atrasados' || abaSelecionada === 'listagem') && `${clientesFiltrados.length} clientes`}
           </p>
         </header>
+
+        {/* BANNER DE AVISO: Coluna aba_atual não existe */}
+        {!colunaAbaAtualExiste && clientes.length > 0 && (
+          <div className="bg-red-900/40 border-y-2 border-red-500 px-8 py-4">
+            <div className="flex items-start gap-4">
+              <AlertCircle className="w-6 h-6 text-red-400 flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <h3 className="text-red-300 font-bold text-lg mb-1">⚠️ Banco de Dados Desatualizado</h3>
+                <p className="text-red-200 text-sm mb-3">
+                  A coluna <code className="bg-red-950/50 px-2 py-0.5 rounded text-red-300 font-mono">aba_atual</code> não existe no Supabase. 
+                  Clientes podem sumir das abas ao atualizar status. Execute o script SQL abaixo para corrigir:
+                </p>
+                <div className="bg-gray-900/70 rounded-lg p-4 font-mono text-sm text-gray-200">
+                  <p className="text-gray-400 mb-2">-- 1. Acesse: Supabase Dashboard → SQL Editor</p>
+                  <p className="text-yellow-400">ALTER TABLE clientes ADD COLUMN IF NOT EXISTS aba_atual TEXT;</p>
+                  <p className="text-green-400 mt-2">UPDATE clientes SET aba_atual = 'pendentes' WHERE aba_atual IS NULL;</p>
+                </div>
+                <p className="text-red-200 text-xs mt-3">
+                  📍 <strong>Como executar:</strong> Supabase Dashboard → Projeto → SQL Editor → New Query → Cole e execute (Run)
+                </p>
+              </div>
+              <button 
+                onClick={() => setColunaAbaAtualExiste(true)} 
+                className="text-red-400 hover:text-red-300 transition-colors flex-shrink-0"
+                title="Ocultar aviso"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* DASHBOARD */}
         {abaSelecionada === 'dashboard' && (
@@ -1122,8 +1312,8 @@ Gestão Sistemas
                         {cliente.atrasado && abaSelecionada === 'atrasados' && <span className="bg-red-600 text-white px-2 py-0.5 rounded text-xs font-bold">ATRASADO - {cliente.mesAtrasado && formatarMes(cliente.mesAtrasado)}</span>}
                       </div>
                       <p className="text-[#7FB069] text-sm font-medium mt-1">{cliente.sistema}</p>
-                      {cliente.analista && <p className="text-gray-400 text-xs mt-1">Analista: {cliente.analista}</p>}
-                      {cliente.motivoSemBackup && <p className="text-orange-400 text-xs mt-1 italic">Motivo: {cliente.motivoSemBackup}</p>}
+                      {cliente.analista && (abaSelecionada === 'concluidos' || abaSelecionada === 'backupCritico') && <p className="text-gray-400 text-xs mt-1">Analista: {cliente.analista}</p>}
+                      {cliente.motivoSemBackup && abaSelecionada === 'backupCritico' && <p className="text-orange-400 text-xs mt-1 italic">Motivo: {cliente.motivoSemBackup}</p>}
                     </div>
 
                     <div className="w-56">
@@ -1264,7 +1454,7 @@ Gestão Sistemas
                         {!cliente.ativo && <span className="bg-gray-600 text-white px-2 py-0.5 rounded text-xs font-bold">INATIVO</span>}
                       </div>
                       <p className="text-[#7FB069] text-sm font-medium mt-1">{cliente.sistema}</p>
-                      {cliente.analista && <p className="text-gray-400 text-xs mt-1">Analista: {cliente.analista}</p>}
+                      {cliente.analista && (abaSelecionada === 'concluidos' || abaSelecionada === 'backupCritico') && <p className="text-gray-400 text-xs mt-1">Analista: {cliente.analista}</p>}
                       <div className="flex items-center gap-4 mt-2">
                         <span className={`text-xs px-2 py-1 rounded ${cliente.statusEnvio === 'Enviado' ? 'bg-green-700/40 text-green-300' : 'bg-gray-700/40 text-gray-300'}`}>
                           Envio: {cliente.statusEnvio}
@@ -1319,260 +1509,6 @@ Gestão Sistemas
           </main>
         )}
 
-        {/* RELATÓRIOS */}
-        {abaSelecionada === 'relatorios' && (
-          <main className="flex-1 p-8 overflow-auto">
-            {/* Filtro de Mês */}
-            <div className="mb-6 flex items-center gap-3">
-              <div className="flex items-center gap-2">
-                <label className="text-gray-300 text-sm">Filtrar por Mês:</label>
-                <input 
-                  type="month" 
-                  value={filtroMes} 
-                  onChange={(e) => setFiltroMes(e.target.value)} 
-                  className="px-4 py-2.5 bg-[#0A2F2F] border border-[#7FB069]/20 rounded-lg text-white cursor-pointer"
-                />
-              </div>
-              {filtroMes && <button onClick={() => setFiltroMes('')} className="px-4 py-2 text-gray-300 hover:bg-[#0D3B3B] rounded-lg">Limpar Filtro</button>}
-            </div>
-
-            {/* Aviso sobre atualização mensal */}
-            {!filtroMes && (
-              <div className="mb-6 p-4 bg-blue-500/10 border border-blue-500/30 rounded-lg">
-                <p className="text-blue-300 text-sm">
-                  📊 <strong>Relatório Geral:</strong> Mostrando dados de todos os períodos. Use o filtro de mês acima para ver dados específicos de um mês.
-                </p>
-              </div>
-            )}
-            {filtroMes && (
-              <div className="mb-6 p-4 bg-green-500/10 border border-green-500/30 rounded-lg">
-                <p className="text-green-300 text-sm">
-                  📅 <strong>Filtrado:</strong> Mostrando apenas dados de {formatarMes(filtroMes)}
-                </p>
-              </div>
-            )}
-
-            {/* Cards de Totais por Aba */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-              <div className="bg-[#0A2F2F] p-6 rounded-xl border border-[#7FB069]/20">
-                <div className="flex items-center justify-between">
-                  <div><p className="text-gray-400 text-sm">Pendentes</p><p className="text-3xl font-bold text-yellow-400 mt-2">{clientes.filter(c => c.ativo !== false && !c.atrasado && c.abaAtual === 'pendentes' && (filtroMes ? c.mesReferencia === filtroMes : true)).length}</p></div>
-                  <Clock className="w-8 h-8 text-yellow-400" />
-                </div>
-              </div>
-              <div className="bg-[#0A2F2F] p-6 rounded-xl border border-[#7FB069]/20">
-                <div className="flex items-center justify-between">
-                  <div><p className="text-gray-400 text-sm">Concluídos</p><p className="text-3xl font-bold text-green-400 mt-2">{clientes.filter(c => c.ativo !== false && !c.atrasado && c.statusEnvio === 'Enviado' && (filtroMes ? c.mesReferencia === filtroMes : true)).length}</p></div>
-                  <Check className="w-8 h-8 text-green-400" />
-                </div>
-              </div>
-              <div className="bg-[#0A2F2F] p-6 rounded-xl border border-[#7FB069]/20">
-                <div className="flex items-center justify-between">
-                  <div><p className="text-gray-400 text-sm">Backup Crítico</p><p className="text-3xl font-bold text-orange-400 mt-2">{clientes.filter(c => c.ativo !== false && !c.atrasado && c.abaAtual === 'backupCritico' && (filtroMes ? c.mesReferencia === filtroMes : true)).length}</p></div>
-                  <AlertCircle className="w-8 h-8 text-orange-400" />
-                </div>
-              </div>
-              <div className="bg-[#0A2F2F] p-6 rounded-xl border border-[#7FB069]/20">
-                <div className="flex items-center justify-between">
-                  <div><p className="text-gray-400 text-sm">Atenção</p><p className="text-3xl font-bold text-purple-400 mt-2">{clientes.filter(c => c.ativo !== false && !c.atrasado && c.abaAtual === 'atencao' && (filtroMes ? c.mesReferencia === filtroMes : true)).length}</p></div>
-                  <Bell className="w-8 h-8 text-purple-400" />
-                </div>
-              </div>
-            </div>
-
-            {/* Envio e Backup por Analista */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-              <div className="bg-[#0A2F2F] p-6 rounded-xl border border-[#7FB069]/20">
-                <h3 className="text-xl font-bold text-white mb-4">📤 Envio por Analista {filtroMes ? `(${formatarMes(filtroMes)})` : '(Mês Atual)'}</h3>
-                <div className="space-y-3 max-h-96 overflow-auto">
-                  {analistas.map(analista => {
-                    const mesReferencia = filtroMes || new Date().toISOString().slice(0, 7)
-                    const clientesAnalista = clientes.filter(c => c.analista === analista.nome && c.ativo !== false && !c.atrasado && c.mesReferencia === mesReferencia)
-                    const enviados = clientesAnalista.filter(c => c.statusEnvio === 'Enviado').length
-                    const percentual = clientesAnalista.length > 0 ? Math.round((enviados / clientesAnalista.length) * 100) : 0
-                    return (
-                      <div key={analista.id} className="p-4 bg-[#0D3B3B] rounded-lg">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-white font-bold">{analista.nome}</span>
-                          <span className="text-[#7FB069] font-bold text-lg">{enviados}</span>
-                        </div>
-                        <div className="flex items-center justify-between text-sm mb-2">
-                          <span className="text-gray-400">Total: {clientesAnalista.length}</span>
-                          <span className="text-green-400">Enviados: {enviados}</span>
-                        </div>
-                        <div className="h-2 bg-[#0F4747] rounded-full overflow-hidden">
-                          <div className="h-full bg-[#7FB069]" style={{ width: `${percentual}%` }} />
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-
-              <div className="bg-[#0A2F2F] p-6 rounded-xl border border-[#7FB069]/20">
-                <h3 className="text-xl font-bold text-white mb-4">💾 Backup por Analista {filtroMes ? `(${formatarMes(filtroMes)})` : '(Mês Atual)'}</h3>
-                <div className="space-y-3 max-h-96 overflow-auto">
-                  {analistas.map(analista => {
-                    const mesReferencia = filtroMes || new Date().toISOString().slice(0, 7)
-                    const clientesAnalista = clientes.filter(c => c.analista === analista.nome && c.ativo !== false && !c.atrasado && c.mesReferencia === mesReferencia)
-                    const backups = clientesAnalista.filter(c => c.statusBackup === 'Feito').length
-                    const percentual = clientesAnalista.length > 0 ? Math.round((backups / clientesAnalista.length) * 100) : 0
-                    return (
-                      <div key={analista.id} className="p-4 bg-[#0D3B3B] rounded-lg">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-white font-bold">{analista.nome}</span>
-                          <span className="text-[#7FB069] font-bold text-lg">{backups}</span>
-                        </div>
-                        <div className="flex items-center justify-between text-sm mb-2">
-                          <span className="text-gray-400">Total: {clientesAnalista.length}</span>
-                          <span className="text-green-400">Feitos: {backups}</span>
-                        </div>
-                        <div className="h-2 bg-[#0F4747] rounded-full overflow-hidden">
-                          <div className="h-full bg-[#7FB069]" style={{ width: `${percentual}%` }} />
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            </div>
-
-            {/* Clientes Enviados e Enviados por Sistema */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-              <div className="bg-[#0A2F2F] p-6 rounded-xl border border-[#7FB069]/20">
-                <h3 className="text-xl font-bold text-white mb-4">🏆 Ranking Anual de Envios</h3>
-                <p className="text-gray-400 text-xs mb-4">Total de envios por analista (ano completo)</p>
-                <div className="space-y-3 max-h-96 overflow-auto">
-                  {analistas
-                    .map(analista => {
-                      const todosClientesAnalista = clientes.filter(c => c.analista === analista.nome && c.ativo !== false)
-                      const totalEnviados = todosClientesAnalista.filter(c => c.statusEnvio === 'Enviado').length
-                      return { ...analista, totalEnviados, totalClientes: todosClientesAnalista.length }
-                    })
-                    .sort((a, b) => b.totalEnviados - a.totalEnviados)
-                    .map((analista, index) => {
-                      const percentual = analista.totalClientes > 0 ? Math.round((analista.totalEnviados / analista.totalClientes) * 100) : 0
-                      const medalha = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}º`
-                      
-                      return (
-                        <div key={analista.id} className={`p-4 rounded-lg ${index === 0 ? 'bg-yellow-500/10 border border-yellow-500/30' : index === 1 ? 'bg-gray-400/10 border border-gray-400/30' : index === 2 ? 'bg-orange-600/10 border border-orange-600/30' : 'bg-[#0D3B3B]'}`}>
-                          <div className="flex items-center justify-between mb-2">
-                            <div className="flex items-center gap-2">
-                              <span className="text-2xl">{medalha}</span>
-                              <span className={`font-bold ${index === 0 ? 'text-yellow-400' : index === 1 ? 'text-gray-300' : index === 2 ? 'text-orange-400' : 'text-white'}`}>
-                                {analista.nome}
-                              </span>
-                            </div>
-                            <div className="text-right">
-                              <span className="text-[#7FB069] font-bold text-xl">{analista.totalEnviados}</span>
-                              <span className="text-gray-400 text-sm ml-1">envios</span>
-                            </div>
-                          </div>
-                          <div className="flex items-center justify-between text-sm mb-2">
-                            <span className="text-gray-400">Total: {analista.totalClientes} clientes</span>
-                            <span className="text-green-400 font-bold">{percentual}%</span>
-                          </div>
-                          <div className="h-2 bg-[#0F4747] rounded-full overflow-hidden">
-                            <div className="h-full bg-gradient-to-r from-[#7FB069] to-green-400" style={{ width: `${percentual}%` }} />
-                          </div>
-                        </div>
-                      )
-                    })
-                  }
-                </div>
-              </div>
-
-              <div className="bg-[#0A2F2F] p-6 rounded-xl border border-[#7FB069]/20">
-                <h3 className="text-xl font-bold text-white mb-4">📊 Enviados por Sistema</h3>
-                <div className="space-y-3 max-h-96 overflow-auto">
-                  {sistemas.filter(s => s.nome && s.nome.trim()).map(sistema => {
-                    // Filtrar apenas clientes ativos e não atrasados
-                    const clientesSistema = clientes.filter(c => c.sistema === sistema.nome && c.ativo !== false && !c.atrasado && (!filtroMes || c.mesReferencia === filtroMes))
-                    const enviados = clientesSistema.filter(c => c.statusEnvio === 'Enviado').length
-                    const percentual = clientesSistema.length > 0 ? Math.round((enviados / clientesSistema.length) * 100) : 0
-                    
-                    // Só mostrar se tiver pelo menos 1 cliente
-                    if (clientesSistema.length === 0) return null
-                    
-                    return (
-                      <div key={sistema.id} className="p-4 bg-[#0D3B3B] rounded-lg">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-white font-bold">{sistema.nome}</span>
-                          <span className="text-[#7FB069] font-bold">{enviados}/{clientesSistema.length}</span>
-                        </div>
-                        <div className="h-2 bg-[#0F4747] rounded-full overflow-hidden">
-                          <div className="h-full bg-[#7FB069]" style={{ width: `${percentual}%` }} />
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            </div>
-
-            {/* Clientes com Justificativa */}
-            <div className="bg-[#0A2F2F] p-6 rounded-xl border border-[#7FB069]/20 mb-6">
-              <h3 className="text-xl font-bold text-white mb-4">📝 Clientes com Justificativa de Backup</h3>
-              <div className="space-y-3 max-h-96 overflow-auto">
-                {clientes.filter(c => c.motivoSemBackup && c.ativo !== false && (!filtroMes || c.mesReferencia === filtroMes)).map(cliente => (
-                  <div key={cliente.id} className={`p-4 bg-[#0D3B3B] rounded-lg border-l-4 ${cliente.statusBackup === 'Feito' ? 'border-green-500' : 'border-orange-500'}`}>
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <p className="text-white font-bold">{cliente.nome}</p>
-                          {cliente.statusBackup === 'Feito' && <span className="bg-green-500 text-white text-xs px-2 py-0.5 rounded font-bold">RESOLVIDO</span>}
-                        </div>
-                        <p className="text-[#7FB069] text-sm">{cliente.sistema}</p>
-                        <p className={`text-sm mt-2 italic ${cliente.statusBackup === 'Feito' ? 'text-gray-400 line-through' : 'text-orange-400'}`}>"{cliente.motivoSemBackup}"</p>
-                        {cliente.analista && <p className="text-gray-500 text-xs mt-1">Responsável: {cliente.analista}</p>}
-                        {cliente.statusBackup === 'Feito' && cliente.analistaBackup && (
-                          <p className="text-green-400 text-xs mt-2 font-bold">✅ Backup feito por: {cliente.analistaBackup}</p>
-                        )}
-                      </div>
-                      {cliente.statusBackup === 'Feito' ? (
-                        <Check className="w-6 h-6 text-green-400 ml-4" />
-                      ) : (
-                        <AlertCircle className="w-6 h-6 text-orange-400 ml-4" />
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-              {clientes.filter(c => c.motivoSemBackup && c.ativo !== false && (!filtroMes || c.mesReferencia === filtroMes)).length === 0 && (
-                <p className="text-gray-500 text-center py-8">Nenhum cliente com justificativa</p>
-              )}
-            </div>
-
-            {/* Resumo Geral */}
-            <div className="bg-[#0A2F2F] p-6 rounded-xl border border-[#7FB069]/20">
-              <h3 className="text-xl font-bold text-white mb-4">📈 Resumo Geral</h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="p-4 bg-[#0D3B3B] rounded-lg">
-                  <div className="text-gray-400 text-sm">Taxa de Conclusão</div>
-                  <div className="text-3xl font-bold text-[#7FB069] mt-2">{(() => {
-                    const clientesRelatorio = clientes.filter(c => c.ativo !== false && !c.atrasado && (!filtroMes || c.mesReferencia === filtroMes))
-                    const concluidos = clientesRelatorio.filter(c => c.statusEnvio === 'Enviado').length
-                    return clientesRelatorio.length > 0 ? Math.round((concluidos / clientesRelatorio.length) * 100) : 0
-                  })()}%</div>
-                </div>
-                <div className="p-4 bg-[#0D3B3B] rounded-lg">
-                  <div className="text-gray-400 text-sm">Média por Sistema</div>
-                  <div className="text-3xl font-bold text-white mt-2">{(() => {
-                    const clientesRelatorio = clientes.filter(c => c.ativo !== false && !c.atrasado && (!filtroMes || c.mesReferencia === filtroMes))
-                    return sistemas.length > 0 ? Math.round(clientesRelatorio.length / sistemas.length) : 0
-                  })()}</div>
-                </div>
-                <div className="p-4 bg-[#0D3B3B] rounded-lg">
-                  <div className="text-gray-400 text-sm">Média por Analista</div>
-                  <div className="text-3xl font-bold text-white mt-2">{(() => {
-                    const clientesRelatorio = clientes.filter(c => c.ativo !== false && !c.atrasado && (!filtroMes || c.mesReferencia === filtroMes))
-                    return analistas.length > 0 ? Math.round(clientesRelatorio.length / analistas.length) : 0
-                  })()}</div>
-                </div>
-              </div>
-            </div>
-          </main>
-        )}
 
         {/* CONFIGURAÇÕES */}
         {abaSelecionada === 'configuracoes' && (
@@ -1692,25 +1628,47 @@ Gestão Sistemas
                       const todosClientes = await supabase.getClientes()
                       const atrasados = todosClientes.filter(c => c.atrasado)
                       
+                      console.log(`🧹 Limpando ${atrasados.length} clientes atrasados...`)
+                      
+                      let sucesso = 0
+                      let erros = 0
+                      
                       for (const cliente of atrasados) {
-                        await supabase.updateCliente(cliente.id, {
-                          atrasado: false,
-                          mesAtrasado: null
-                        })
+                        try {
+                          // Primeira tentativa: apenas remover flag atrasado
+                          await supabase.updateCliente(cliente.id, {
+                            atrasado: false,
+                            abaAtual: 'pendentes'
+                          })
+                          sucesso++
+                          console.log(`✅ Cliente ${cliente.nome} limpo`)
+                        } catch (err) {
+                          console.error(`❌ Erro ao limpar ${cliente.nome}:`, err)
+                          erros++
+                        }
                       }
                       
                       await carregarDados()
                       
-                      setNotificacao({
-                        tipo: 'sucesso',
-                        titulo: 'Atrasados Limpos!',
-                        mensagem: `✅ ${atrasados.length} clientes foram limpos\n\n🎉 Sistema pronto para produção!`
-                      })
+                      if (erros === 0) {
+                        setNotificacao({
+                          tipo: 'sucesso',
+                          titulo: 'Atrasados Limpos!',
+                          mensagem: `✅ ${sucesso} clientes foram limpos com sucesso!\n\n🎉 Sistema pronto para produção!`
+                        })
+                      } else {
+                        setNotificacao({
+                          tipo: 'aviso',
+                          titulo: 'Limpeza Parcial',
+                          mensagem: `✅ ${sucesso} limpos\n❌ ${erros} com erro\n\nVerifique o console para detalhes.`
+                        })
+                      }
                     } catch (error) {
+                      console.error('❌ Erro geral:', error)
                       setNotificacao({
                         tipo: 'erro',
                         titulo: 'Erro ao Limpar',
-                        mensagem: 'Não foi possível limpar os atrasados. Tente novamente.'
+                        mensagem: 'Não foi possível limpar os atrasados. Verifique o console e tente novamente.'
                       })
                     }
                   } else if (confirmacao !== null) {
@@ -1814,13 +1772,6 @@ Gestão Sistemas
         </div>
       )}
 
-      {(() => {
-        if (showModalAnalistaBackup) {
-          console.log('🟩 MODAL STATE:', { showModalAnalistaBackup, temClienteBackup: !!clienteBackup })
-        }
-        return null
-      })()}
-
       {showModalAnalistaBackup && clienteBackup && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
           <div className="bg-[#0A2F2F] rounded-xl max-w-md w-full p-6 border border-blue-500/50 shadow-2xl">
@@ -1877,13 +1828,47 @@ Gestão Sistemas
           <div className="bg-[#0A2F2F] rounded-xl max-w-3xl w-full p-6 border border-[#7FB069]/50 shadow-2xl">
             <h2 className="text-2xl font-bold text-white mb-4 flex items-center gap-2">
               <Check className="w-7 h-7 text-[#7FB069]" />
-              Email para Envio de Arquivos Fiscais
+              Finalizar Cliente - Email de Envio
             </h2>
             
             <div className="mb-4 p-4 bg-[#7FB069]/10 border border-[#7FB069]/30 rounded-lg">
               <p className="text-white font-bold text-lg mb-1">{clienteEmail.nome}</p>
               <p className="text-gray-400 text-sm">CNPJ: {clienteEmail.cnpj || 'Não informado'}</p>
-              <p className="text-[#7FB069] text-sm mt-1">Analista: {analistaEmailNome}</p>
+            </div>
+
+            {/* SELEÇÃO DE ANALISTAS */}
+            <div className="grid grid-cols-2 gap-4 mb-5">
+              <div>
+                <label className="block text-gray-300 text-sm font-medium mb-2">
+                  Analista do Envio *
+                </label>
+                <select 
+                  value={analistaEmailNome} 
+                  onChange={(e) => setAnalistaEmailNome(e.target.value)} 
+                  className="w-full px-4 py-3 bg-[#0D3B3B] border border-[#7FB069]/30 rounded-lg text-white focus:border-[#7FB069] focus:outline-none"
+                  autoFocus
+                >
+                  <option value="">Selecione...</option>
+                  {analistas.map(a => (
+                    <option key={a.id} value={a.nome}>{a.nome}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-gray-300 text-sm font-medium mb-2">
+                  Analista do Backup *
+                </label>
+                <select 
+                  value={analistaBackup} 
+                  onChange={(e) => setAnalistaBackup(e.target.value)} 
+                  className="w-full px-4 py-3 bg-[#0D3B3B] border border-[#7FB069]/30 rounded-lg text-white focus:border-[#7FB069] focus:outline-none"
+                >
+                  <option value="">Selecione...</option>
+                  {analistas.map(a => (
+                    <option key={a.id} value={a.nome}>{a.nome}</option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             {/* ASSUNTO */}
@@ -1934,6 +1919,7 @@ Gestão Sistemas
                   setShowModalEmail(false)
                   setClienteEmail(null)
                   setAnalistaEmailNome('')
+                  setAnalistaBackup('')
                 }}
                 className="flex-1 px-4 py-3 border border-gray-600 text-gray-300 rounded-lg hover:bg-[#0D3B3B] transition-colors"
               >
@@ -1941,7 +1927,8 @@ Gestão Sistemas
               </button>
               <button
                 onClick={finalizarCliente}
-                className="flex-1 px-4 py-3 bg-[#7FB069] text-white rounded-lg hover:bg-[#6A9A56] transition-colors font-semibold"
+                disabled={!analistaEmailNome || !analistaBackup}
+                className="flex-1 px-4 py-3 bg-[#7FB069] text-white rounded-lg hover:bg-[#6A9A56] transition-colors font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 ✓ Finalizar e Concluir Cliente
               </button>

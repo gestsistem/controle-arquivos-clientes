@@ -1,8 +1,17 @@
 // Cliente Supabase - Comunicação direta com banco de dados
 import { projectId, publicAnonKey } from './supabase/info'
 
+// Verificar se as variáveis de ambiente estão configuradas
+if (!projectId || !publicAnonKey) {
+  console.error('❌ ERRO: Variáveis de ambiente não configuradas!')
+  console.error('projectId:', projectId)
+  console.error('publicAnonKey:', publicAnonKey ? 'Configurada' : 'FALTANDO')
+}
+
 const SUPABASE_URL = `https://${projectId}.supabase.co`
 const SUPABASE_REST_URL = `${SUPABASE_URL}/rest/v1`
+
+console.log('🔗 Supabase URL:', SUPABASE_URL)
 
 // Headers padrão para todas as requisições
 const getHeaders = () => ({
@@ -111,14 +120,26 @@ export async function getClientes() {
     
     // DEBUG: Ver dados RAW do banco
     if (data[0]) {
-      console.log('🟦 RAW do banco:', { nome: data[0].nome, analista_backup: data[0].analista_backup })
+      console.log('🟦 RAW do banco:', { 
+        nome: data[0].nome, 
+        analista_backup: data[0].analista_backup,
+        aba_atual: data[0].aba_atual,
+        status_envio: data[0].status_envio,
+        status_backup: data[0].status_backup
+      })
     }
     
     const converted = toCamelCase(data)
     
     // DEBUG: Ver depois da conversão
     if (converted[0]) {
-      console.log('🟩 CONVERTIDO:', { nome: converted[0].nome, analistaBackup: converted[0].analistaBackup })
+      console.log('🟩 CONVERTIDO:', { 
+        nome: converted[0].nome, 
+        analistaBackup: converted[0].analistaBackup,
+        abaAtual: converted[0].abaAtual,
+        statusEnvio: converted[0].statusEnvio,
+        statusBackup: converted[0].statusBackup
+      })
     }
     
     return converted
@@ -157,13 +178,52 @@ export async function updateCliente(id: string, updates: any) {
       delete updatesParaSalvar.emails
     }
     
-    const [data] = await fetchSupabase(`clientes?id=eq.${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(toSnakeCase(updatesParaSalvar))
-    })
-    return toCamelCase(data)
+    const snakeCaseUpdates = toSnakeCase(updatesParaSalvar)
+    console.log('💾 UPDATE Supabase:', { id, snakeCaseUpdates })
+    console.log('📤 JSON que será enviado:', JSON.stringify(snakeCaseUpdates))
+    
+    try {
+      const data = await fetchSupabase(`clientes?id=eq.${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(snakeCaseUpdates)
+      })
+      console.log('✅ UPDATE bem-sucedido! Data:', data)
+      
+      // Se retornou array, pegar primeiro elemento
+      if (Array.isArray(data) && data.length > 0) {
+        return toCamelCase(data[0])
+      }
+      return toCamelCase(data)
+    } catch (innerError: any) {
+      console.error('❌ ERRO no UPDATE:', innerError.message)
+      
+      // Se o erro for "coluna não existe", remover colunas problemáticas
+      if (innerError.message && innerError.message.includes('column') && (
+        innerError.message.includes('aba_atual') || 
+        innerError.message.includes('mes_referencia') ||
+        innerError.message.includes('analista_backup') ||
+        innerError.message.includes('urgente')
+      )) {
+        console.warn('⚠️ Coluna não existe no banco. Removendo colunas problemáticas...')
+        const { aba_atual, mes_referencia, mes_atrasado, analista_backup, urgente, ...updatesClean } = snakeCaseUpdates
+        
+        console.log('💾 Tentando UPDATE apenas com campos que existem:', updatesClean)
+        
+        const data = await fetchSupabase(`clientes?id=eq.${id}`, {
+          method: 'PATCH',
+          body: JSON.stringify(updatesClean)
+        })
+        
+        if (Array.isArray(data) && data.length > 0) {
+          return toCamelCase(data[0])
+        }
+        return toCamelCase(data)
+      }
+      
+      throw innerError
+    }
   } catch (error) {
-    console.error('Erro ao atualizar cliente:', error)
+    console.error('❌ Erro ao atualizar cliente:', error)
     throw error
   }
 }

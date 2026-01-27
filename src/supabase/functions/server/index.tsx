@@ -44,6 +44,11 @@ interface Cliente {
   atencao: boolean
   atrasado: boolean
   motivoSemBackup?: string
+  abaAtual?: 'pendentes' | 'concluidos' | 'backupCritico' | 'atencao'
+  mesReferencia?: string
+  mesAtrasado?: string
+  analistaBackup?: string
+  urgente?: boolean
 }
 
 interface Analista {
