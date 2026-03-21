@@ -9,7 +9,7 @@ import { ConfirmacaoExclusao } from './components/ConfirmacaoExclusao'
 import { DashboardGraficos } from './components/DashboardGraficos'
 const SENHA_ADMIN = 'Gestao2042**'
 
-type StatusEnvio = 'Enviado' | 'Pendente' | 'Recém Implantado' | 'Gerencial' | 'Inativo' | 'Não Teve Vendas' | 'Bloqueio SEFAZ' | 'Bloqueio Financeiro'
+type StatusEnvio = 'Enviado' | 'Pendente' | 'Recém Implantado' | 'Gerencial' | 'Inativo' | 'Não Teve Vendas' | 'Bloqueio SEFAZ' | 'Bloqueio Financeiro' | 'Cliente que envia'
 type AbaType = 'dashboard' | 'pendentes' | 'concluidos' | 'backupCritico' | 'atencao' | 'atrasados' | 'listagem' | 'configuracoes'
 type AbaCliente = 'pendentes' | 'concluidos' | 'backupCritico' | 'atencao'
 
@@ -83,7 +83,7 @@ export default function App() {
   const [novoSistema, setNovoSistema] = useState({ nome: '' })
   const [novoAnalista, setNovoAnalista] = useState({ nome: '' })
 
-  const statusEspeciais: StatusEnvio[] = ['Recém Implantado', 'Gerencial', 'Inativo', 'Não Teve Vendas', 'Bloqueio SEFAZ', 'Bloqueio Financeiro']
+  const statusEspeciais: StatusEnvio[] = ['Recém Implantado', 'Gerencial', 'Inativo', 'Não Teve Vendas', 'Bloqueio SEFAZ', 'Bloqueio Financeiro', 'Cliente que envia']
 
   useEffect(() => { carregarDados() }, [])
 
@@ -1327,6 +1327,7 @@ Gestão Sistemas
                         <option>Não Teve Vendas</option>
                         <option>Bloqueio SEFAZ</option>
                         <option>Bloqueio Financeiro</option>
+                        <option>Cliente que envia</option>
                       </select>
                     </div>
 
@@ -2100,8 +2101,13 @@ Gestão Sistemas
                                 titulo: 'Email Adicionado!',
                                 mensagem: `Email "${novoEmail}" adicionado com sucesso.`
                               })
-                              carregarDados()
-                              setShowModalDetalhes(false)
+                              // Atualizar o estado local dos clientes
+                              setClientes(prev => prev.map(c => 
+                                c.id === clienteDetalhes.id ? { ...c, emails: novosEmails } : c
+                              ))
+                              
+                              // Atualizar o clienteDetalhes no modal
+                              setClienteDetalhes({ ...clienteDetalhes, emails: novosEmails })
                             })
                             .catch(() => {
                               setNotificacao({
