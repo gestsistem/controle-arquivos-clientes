@@ -1,7 +1,7 @@
 
-  # GestaoControle
+  # GestaoControle (cópia)
 
-  This is a code bundle for GestaoControle. The original project is available at https://www.figma.com/design/QvFM7Tnr0OC7zSEbylMKdO/GestaoControle.
+  This is a code bundle for GestaoControle (cópia). The original project is available at https://www.figma.com/design/ScyDyJAbrlUg3LQR5PwUJn/GestaoControle--c%C3%B3pia-.
 
   ## Running the code
 
