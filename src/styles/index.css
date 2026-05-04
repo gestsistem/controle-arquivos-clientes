@@ -1,8 +1,5 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
-/* 🔥 força Tailwind ter prioridade */
-* {
-  all: revert;
-}
+@import 'tailwindcss' source(none);
+@source '../../**/*.{js,ts,jsx,tsx}';
+@import 'tw-animate-css';
+@import './default_theme.css';
+@import './globals.css';
